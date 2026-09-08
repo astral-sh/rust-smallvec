@@ -328,7 +328,7 @@ fn test_insert_many_long_hint() {
 #[test]
 fn test_insert_many_hint_and_storage_boundaries() {
     for &len in &[0, 1, 7, 8, 9] {
-        for &added in &[0, 1, 7, 9] {
+        for &added in &[0, 1, 2, 3, 7, 9] {
             for index in 0..=len {
                 for &hint in &[0, 1, added, added + 3] {
                     let mut v: SmallVec<[usize; 8]> = (0..len).collect();
@@ -365,7 +365,7 @@ fn test_insert_many_fallback_panic_keeps_order_and_ownership() {
     }
 
     for &hint in &[0, 1] {
-        for &added in &[1, 4, 9] {
+        for &added in &[1, 2, 3, 4, 9] {
             let drops = Rc::new(Cell::new(0));
             let mut v: SmallVec<[Item; 8]> = (0..3).map(|i| Item(i, drops.clone())).collect();
             let result = catch_unwind(AssertUnwindSafe(|| {
@@ -388,6 +388,89 @@ fn test_insert_many_fallback_panic_keeps_order_and_ownership() {
             assert_eq!(drops.get(), 3 + added);
         }
     }
+}
+
+#[test]
+fn test_insert_many_upper_hint_and_iterator_drop_panic() {
+    use std::{
+        cell::Cell,
+        ops::Range,
+        panic::{catch_unwind, AssertUnwindSafe},
+    };
+
+    struct Iter {
+        values: Range<usize>,
+        lower: usize,
+        upper: usize,
+        panic: bool,
+        drops: Rc<Cell<usize>>,
+    }
+    impl Iterator for Iter {
+        type Item = usize;
+        fn next(&mut self) -> Option<usize> {
+            self.values.next()
+        }
+        fn size_hint(&self) -> (usize, Option<usize>) {
+            (self.lower, Some(self.upper))
+        }
+    }
+    impl Drop for Iter {
+        fn drop(&mut self) {
+            self.drops.set(self.drops.get() + 1);
+            assert!(!self.panic, "iterator drop panic");
+        }
+    }
+
+    for &len in &[3, 8, 9] {
+        for added in 0..=3 {
+            for lower in 0..=1 {
+                // Include dishonest upper bounds: they must not lose items.
+                for &upper in &[0, 1, added] {
+                    for &panic in &[false, true] {
+                        let drops = Rc::new(Cell::new(0));
+                        let mut v: SmallVec<[usize; 8]> = (0..len).collect();
+                        let result = catch_unwind(AssertUnwindSafe(|| {
+                            v.insert_many(
+                                1,
+                                Iter {
+                                    values: 100..100 + added,
+                                    lower,
+                                    upper,
+                                    panic,
+                                    drops: drops.clone(),
+                                },
+                            );
+                        }));
+                        assert_eq!(result.is_err(), panic);
+                        assert_eq!(drops.get(), 1);
+                        let expected: Vec<_> =
+                            (0..1).chain(100..100 + added).chain(1..len).collect();
+                        assert_eq!(&*v, &*expected);
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn test_insert_many_empty_invalid_index_does_not_poll() {
+    use std::{cell::Cell, panic::AssertUnwindSafe};
+
+    let polls = Cell::new(0);
+    let mut v: SmallVec<[usize; 8]> = (0..3).collect();
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        v.insert_many(
+            4,
+            std::iter::from_fn(|| {
+                polls.set(polls.get() + 1);
+                None
+            }),
+        );
+    }));
+    assert!(result.is_err());
+    assert_eq!(polls.get(), 0);
+    assert_eq!(&*v, &[0, 1, 2]);
 }
 
 #[test]

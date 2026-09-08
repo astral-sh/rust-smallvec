@@ -47,6 +47,7 @@ macro_rules! cases {
 cases! {
     filtered_empty: 1u64, 8, 0, 0, false, true;
     filtered_single: 1u64, 7, 1, 0, false, true;
+    filtered_pair: 1u64, 6, 2, 0, false, true;
     filtered_inline: 1u64, 4, 4, 0, false, true;
     filtered_spill: 1u64, 8, 8, 0, false, true;
     filtered_heap_growth: 1u64, 64, 64, 0, false, true;
@@ -60,4 +61,60 @@ cases! {
     exact_append_1024: 1u64, 1024, 1024, 1024, true, false;
     filtered_large_elements: [1u64; 32], 64, 64, 0, true, true;
     exact_large_elements: [1u64; 32], 64, 64, 0, true, false;
+}
+
+struct Hint<I> {
+    iter: I,
+    lower: usize,
+    upper: bool,
+}
+
+impl<I: Iterator> Iterator for Hint<I> {
+    type Item = I::Item;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.iter.next()
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let (lower, upper) = self.iter.size_hint();
+        (lower.min(self.lower), if self.upper { upper } else { None })
+    }
+}
+
+fn insert_with_hint(b: &mut Bencher, added: usize, lower: usize, upper: bool) {
+    let source = [1u64; 6];
+    let input = vec![2u64; added];
+    b.iter(|| {
+        let mut v = SmallVec::<[u64; 8]>::from_slice(black_box(&source));
+        v.insert_many(
+            0,
+            Hint {
+                iter: black_box(&input).iter().cloned(),
+                lower,
+                upper,
+            },
+        );
+        black_box(v)
+    });
+}
+
+#[bench]
+fn unknown_empty(b: &mut Bencher) {
+    insert_with_hint(b, 0, 0, false);
+}
+
+#[bench]
+fn unknown_single(b: &mut Bencher) {
+    insert_with_hint(b, 1, 0, false);
+}
+
+#[bench]
+fn weak_hint_single_excess(b: &mut Bencher) {
+    insert_with_hint(b, 2, 1, true);
+}
+
+#[bench]
+fn weak_hint_multiple_excess(b: &mut Bencher) {
+    insert_with_hint(b, 3, 1, true);
 }

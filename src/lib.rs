@@ -1502,6 +1502,10 @@ impl<A: Array> SmallVec<A> {
         let old_len = self.len();
         assert!(index <= old_len);
 
+        if lower_size_bound == 0 {
+            return insert_excess(self, index, iter);
+        }
+
         unsafe {
             // Reserve space for `lower_size_bound` elements.
             self.reserve(lower_size_bound);
@@ -1551,24 +1555,40 @@ impl<A: Array> SmallVec<A> {
             mem::forget(guard);
         }
 
-        // Append any remaining elements, then move them ahead of the tail once.
-        // The guard also restores their position if the iterator panics.
-        if let Some(element) = iter.next() {
-            extend_and_rotate(self, index + num_added, element, iter);
+        insert_excess(self, index + num_added, iter);
+
+        #[inline]
+        fn insert_excess<A: Array, I: Iterator<Item = A::Item>>(
+            vec: &mut SmallVec<A>,
+            start: usize,
+            mut iter: I,
+        ) {
+            if let Some(element) = iter.next() {
+                let guard = RotateOnDrop {
+                    old_len: vec.len(),
+                    start,
+                    vec,
+                };
+                // Keep the first item guarded in case lookahead panics.
+                guard.vec.push(element);
+                if let Some(element) = iter.next() {
+                    extend_and_rotate(guard, element, iter);
+                } else {
+                    // The push reserved a slot, so reinserting cannot grow.
+                    let element = guard.vec.pop().unwrap();
+                    guard.vec.insert(start, element);
+                    // The element is already in position.
+                    mem::forget(guard);
+                }
+            }
         }
 
         #[cold]
         fn extend_and_rotate<A: Array, I: Iterator<Item = A::Item>>(
-            vec: &mut SmallVec<A>,
-            start: usize,
+            guard: RotateOnDrop<'_, A>,
             element: A::Item,
             iter: I,
         ) {
-            let guard = RotateOnDrop {
-                old_len: vec.len(),
-                start,
-                vec,
-            };
             guard.vec.push(element);
             guard.vec.extend(iter);
         }
