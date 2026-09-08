@@ -1484,6 +1484,7 @@ impl<A: Array> SmallVec<A> {
 
     /// Insert multiple elements at position `index`, shifting all following
     /// elements toward the back.
+    #[inline]
     pub fn insert_many<I: IntoIterator<Item = A::Item>>(&mut self, index: usize, iterable: I) {
         let mut iter = iterable.into_iter();
         if index == self.len() {
@@ -1550,10 +1551,38 @@ impl<A: Array> SmallVec<A> {
             mem::forget(guard);
         }
 
-        // Insert any remaining elements one-by-one.
-        for element in iter {
-            self.insert(index + num_added, element);
-            num_added += 1;
+        // Append any remaining elements, then move them ahead of the tail once.
+        // The guard also restores their position if the iterator panics.
+        if let Some(element) = iter.next() {
+            extend_and_rotate(self, index + num_added, element, iter);
+        }
+
+        #[cold]
+        fn extend_and_rotate<A: Array, I: Iterator<Item = A::Item>>(
+            vec: &mut SmallVec<A>,
+            start: usize,
+            element: A::Item,
+            iter: I,
+        ) {
+            let guard = RotateOnDrop {
+                old_len: vec.len(),
+                start,
+                vec,
+            };
+            guard.vec.push(element);
+            guard.vec.extend(iter);
+        }
+
+        struct RotateOnDrop<'a, A: Array> {
+            vec: &'a mut SmallVec<A>,
+            start: usize,
+            old_len: usize,
+        }
+
+        impl<A: Array> Drop for RotateOnDrop<'_, A> {
+            fn drop(&mut self) {
+                self.vec[self.start..].rotate_left(self.old_len - self.start);
+            }
         }
 
         struct DropOnPanic<T> {

@@ -325,6 +325,92 @@ fn test_insert_many_long_hint() {
     );
 }
 
+#[test]
+fn test_insert_many_hint_and_storage_boundaries() {
+    for &len in &[0, 1, 7, 8, 9] {
+        for &added in &[0, 1, 7, 9] {
+            for index in 0..=len {
+                for &hint in &[0, 1, added, added + 3] {
+                    let mut v: SmallVec<[usize; 8]> = (0..len).collect();
+                    v.insert_many(
+                        index,
+                        MockHintIter {
+                            x: 100..100 + added,
+                            hint,
+                        },
+                    );
+                    let expected: Vec<_> = (0..index)
+                        .chain(100..100 + added)
+                        .chain(index..len)
+                        .collect();
+                    assert_eq!(&*v, &*expected);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn test_insert_many_fallback_panic_keeps_order_and_ownership() {
+    use std::{
+        cell::Cell,
+        panic::{catch_unwind, AssertUnwindSafe},
+    };
+
+    struct Item(usize, Rc<Cell<usize>>);
+    impl Drop for Item {
+        fn drop(&mut self) {
+            self.1.set(self.1.get() + 1);
+        }
+    }
+
+    for &hint in &[0, 1] {
+        for &added in &[1, 4, 9] {
+            let drops = Rc::new(Cell::new(0));
+            let mut v: SmallVec<[Item; 8]> = (0..3).map(|i| Item(i, drops.clone())).collect();
+            let result = catch_unwind(AssertUnwindSafe(|| {
+                v.insert_many(
+                    1,
+                    MockHintIter {
+                        x: (0..).map(|i| {
+                            assert!(i < added, "iterator panic");
+                            Item(100 + i, drops.clone())
+                        }),
+                        hint,
+                    },
+                );
+            }));
+            assert!(result.is_err());
+            let expected: Vec<_> = (0..1).chain(100..100 + added).chain(1..3).collect();
+            assert_eq!(v.iter().map(|item| item.0).collect::<Vec<_>>(), expected);
+            assert_eq!(drops.get(), 0);
+            drop(v);
+            assert_eq!(drops.get(), 3 + added);
+        }
+    }
+}
+
+#[test]
+fn test_insert_many_fallback_zst_drop() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static DROPS: AtomicUsize = AtomicUsize::new(0);
+    struct Item;
+    impl Drop for Item {
+        fn drop(&mut self) {
+            DROPS.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    let mut v: SmallVec<[Item; 8]> = (0..3).map(|_| Item).collect();
+    v.insert_many(1, (0..9).filter(|_| true).map(|_| Item));
+    assert_eq!(v.len(), 12);
+    assert!(!v.spilled());
+    assert_eq!(DROPS.load(Ordering::SeqCst), 0);
+    drop(v);
+    assert_eq!(DROPS.load(Ordering::SeqCst), 12);
+}
+
 // https://github.com/servo/rust-smallvec/issues/96
 mod insert_many_panic {
     use {
