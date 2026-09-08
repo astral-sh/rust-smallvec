@@ -68,11 +68,6 @@ name = "std"
 required-features = ["std"]
 
 [[bench]]
-name = "put_bytes"
-harness = false
-required-features = ["bytes"]
-
-[[bench]]
 name = "bench"
 path = "benches/bench.rs"
 harness = false
