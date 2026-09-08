@@ -4,7 +4,13 @@ use {
         IntoIter,
         SmallVec
     },
-    core::ptr::copy_nonoverlapping
+    core::{
+        mem::ManuallyDrop,
+        ptr::{
+            copy,
+            copy_nonoverlapping
+        }
+    }
 };
 
 /// A trait for specializing the implementation of [`from_elem`].
@@ -246,6 +252,34 @@ where I: core::iter::TrustedLen<Item = T>
         // Reuse the extend specialization for TrustedLen.
         v.spec_extend(iter);
         v
+    }
+}
+
+impl<T, const N: usize, const M: usize> SpecFromIterator<T, IntoIter<T, M>> for SmallVec<T, N> {
+    fn spec_from_iter(iter: IntoIter<T, M>) -> Self {
+        let len = iter.len();
+        if iter.end.on_heap() && len > Self::inline_size() {
+            // SAFETY: The iterator's heap flag is set.
+            let (ptr, capacity) = unsafe { iter.raw.heap };
+            // Bound spare capacity even if only the back was consumed or the
+            // source had excess capacity before iteration started.
+            if len >= capacity.div_ceil(2) {
+                let iter = ManuallyDrop::new(iter);
+                // SAFETY: The iterator owns a heap allocation containing
+                // initialized elements in `begin..end`. Move them to
+                // the start, allowing overlap, and transfer ownership
+                // of the allocation to the new vector.
+                unsafe {
+                    if iter.begin != 0 {
+                        copy(ptr.as_ptr().add(iter.begin), ptr.as_ptr(), len);
+                    }
+                    return Self::from_raw_parts(ptr.as_ptr(), len, capacity);
+                }
+            }
+        }
+        let mut result = Self::with_capacity(len);
+        result.spec_extend(iter);
+        result
     }
 }
 
