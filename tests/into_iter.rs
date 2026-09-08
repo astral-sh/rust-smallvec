@@ -94,7 +94,7 @@ fn skipped_items_are_dropped_once() {
 }
 
 thread_local! {
-    static ZST_DROPS: Cell<usize> = Cell::new(0);
+    static ZST_DROPS: Cell<usize> = const { Cell::new(0) };
 }
 
 struct Zst;
@@ -158,11 +158,11 @@ fn last_drops_remainder_when_a_destructor_panics() {
 #[test]
 fn skipping_large_zero_sized_length() {
     for &back in &[false, true] {
-        for &skip in &[std::usize::MAX - 2, std::usize::MAX] {
+        for &skip in &[usize::MAX - 2, usize::MAX] {
             let mut vec = Vector::<()>::new();
             // All unit values are initialized, and ZST capacity is usize::MAX.
             unsafe {
-                vec.set_len(std::usize::MAX - 1);
+                vec.set_len(usize::MAX - 1);
             }
             let mut iter = vec.into_iter();
             let item = if back {
@@ -170,14 +170,7 @@ fn skipping_large_zero_sized_length() {
             } else {
                 iter.nth(skip)
             };
-            assert_eq!(
-                item,
-                if skip == std::usize::MAX {
-                    None
-                } else {
-                    Some(())
-                }
-            );
+            assert_eq!(item, if skip == usize::MAX { None } else { Some(()) });
             assert_eq!(iter.next(), None);
             assert_eq!(iter.next_back(), None);
         }
