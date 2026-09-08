@@ -1915,11 +1915,19 @@ where
     ///
     /// If `len` is greater than the current length, `value` is appended to the
     /// vector until its length equals `len`.
+    #[inline]
     pub fn resize(&mut self, len: usize, value: A::Item) {
         let old_len = self.len();
 
         if len > old_len {
-            self.extend(repeat(value).take(len - old_len));
+            if mem::needs_drop::<A::Item>() {
+                self.reserve(len - old_len);
+                self.extend((old_len + 1..len).map(|_| value.clone()));
+                self.push(value);
+            } else {
+                // Keep the simple fill loop for types without drop glue.
+                self.extend(repeat(value).take(len - old_len));
+            }
         } else {
             self.truncate(len);
         }
