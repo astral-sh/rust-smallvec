@@ -1675,31 +1675,73 @@ impl<T, const N: usize> SmallVec<T, N> {
     #[inline]
     pub fn dedup_by<F>(&mut self, mut same_bucket: F)
     where F: FnMut(&mut T, &mut T) -> bool {
-        // See the implementation of Vec::dedup_by in the
-        // standard library for an explanation of this algorithm.
         let len = self.len();
         if len <= 1 {
             return;
         }
 
-        let ptr = self.as_mut_ptr();
-        let mut w: usize = 1;
+        // Leave the unique prefix in place. Once we find a duplicate,
+        // every retained element can move directly into an earlier hole.
+        let mut read = 1;
+        while read < len {
+            let ptr = self.as_mut_ptr();
+            // SAFETY: Both indices are initialized and distinct.
+            if unsafe { same_bucket(&mut *ptr.add(read), &mut *ptr.add(read - 1)) } {
+                break;
+            }
+            read += 1;
+        }
+        if read == len {
+            return;
+        }
 
-        unsafe {
-            for r in 1..len {
-                let p_r = ptr.add(r);
-                let p_wm1 = ptr.add(w - 1);
-                if !same_bucket(&mut *p_r, &mut *p_wm1) {
-                    if r != w {
-                        let p_w = p_wm1.add(1);
-                        core::ptr::swap(p_r, p_w);
-                    }
-                    w += 1;
+        struct FillGapOnDrop<'a, T, const N: usize> {
+            vec: &'a mut SmallVec<T, N>,
+            read: usize,
+            write: usize
+        }
+
+        impl<T, const N: usize> Drop for FillGapOnDrop<'_, T, N> {
+            fn drop(&mut self) {
+                let remaining = self.vec.len() - self.read;
+                // SAFETY: The prefix before write and tail from read are
+                // initialized. Move the tail over the holes, even if the
+                // predicate or an element's destructor panics.
+                unsafe {
+                    let ptr = self.vec.as_mut_ptr();
+                    copy(ptr.add(self.read), ptr.add(self.write), remaining);
+                    self.vec.set_len(self.write + remaining);
                 }
             }
         }
 
-        self.truncate(w);
+        let mut gap = FillGapOnDrop {
+            vec: self,
+            read: read + 1,
+            write: read
+        };
+        // SAFETY: read is the first duplicate. Advance the guard before
+        // dropping it so unwinding cannot drop the same element again.
+        unsafe { drop_in_place(gap.vec.as_mut_ptr().add(read)) };
+
+        let ptr = gap.vec.as_mut_ptr();
+        // SAFETY: write < read <= len and write >= 1. Each survivor is
+        // moved once into a hole; moved-from slots are never dropped.
+        unsafe {
+            while gap.read < len {
+                let current = ptr.add(gap.read);
+                if same_bucket(&mut *current, &mut *ptr.add(gap.write - 1)) {
+                    gap.read += 1;
+                    drop_in_place(current);
+                } else {
+                    copy_nonoverlapping(current, ptr.add(gap.write), 1);
+                    gap.write += 1;
+                    gap.read += 1;
+                }
+            }
+            gap.vec.set_len(gap.write);
+        }
+        core::mem::forget(gap);
     }
 
     pub fn resize_with<F>(&mut self, new_len: usize, f: F)
