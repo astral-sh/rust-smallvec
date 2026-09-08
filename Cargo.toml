@@ -68,14 +68,14 @@ name = "std"
 required-features = ["std"]
 
 [[bench]]
-name = "bench"
-path = "benches/bench.rs"
-harness = false
-
-[[bench]]
 name = "put_bytes"
 harness = false
 required-features = ["bytes"]
+
+[[bench]]
+name = "bench"
+path = "benches/bench.rs"
+harness = false
 
 [package.metadata.docs.rs]
 all-features = true
