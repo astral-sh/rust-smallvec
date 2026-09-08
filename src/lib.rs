@@ -114,7 +114,6 @@ use {
             Hash,
             Hasher
         },
-        iter::repeat_n,
         marker::PhantomData,
         mem::{
             ManuallyDrop,
@@ -2052,7 +2051,15 @@ impl<T, const N: usize> Drop for IntoIter<T, N> {
 #[track_caller]
 pub fn from_elem<T: Clone, const N: usize>(elem: T, n: usize) -> SmallVec<T, N> {
     if n > SmallVec::<T, N>::inline_size() {
-        repeat_n(elem, n).collect()
+        #[cfg(feature = "specialization")]
+        {
+            core::iter::repeat_n(elem, n).collect()
+        }
+
+        #[cfg(not(feature = "specialization"))]
+        {
+            SmallVec::from_vec(alloc::vec![elem; n])
+        }
     } else {
         #[cfg(feature = "specialization")]
         {
@@ -2504,9 +2511,10 @@ unsafe impl<const N: usize> BufMut for SmallVec<u8, N> {
 
     #[inline]
     fn put_bytes(&mut self, val: u8, cnt: usize) {
-        // If the addition overflows, then the `resize` will fail.
-        let new_len = self.len().saturating_add(cnt);
-        self.resize(new_len, val);
+        self.reserve(cnt);
+        self.spare_capacity_mut()[..cnt].fill(MaybeUninit::new(val));
+        // SAFETY: We reserved space for `cnt` bytes and initialized them above.
+        unsafe { self.len.add(cnt) };
     }
 }
 
