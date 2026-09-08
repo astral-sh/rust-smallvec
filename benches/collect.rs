@@ -85,12 +85,71 @@ fn collect(c: &mut Criterion) {
     group.finish();
 }
 
+struct Dropped(usize);
+
+impl Drop for Dropped {
+    fn drop(&mut self) {
+        black_box(self.0);
+    }
+}
+
+fn retention_case<T>(
+    c: &mut Criterion,
+    name: &str,
+    capacity: usize,
+    len: usize,
+    front: usize,
+    back: usize,
+    item: impl Fn(usize) -> T
+) {
+    c.bench_function(name, |b| {
+        b.iter_batched(
+            || {
+                let mut source = SmallVec::<T, 8>::with_capacity(capacity);
+                source.extend((0..len).map(&item));
+                let mut iter = source.into_iter();
+                for _ in 0..front {
+                    drop(iter.next());
+                }
+                for _ in 0..back {
+                    drop(iter.next_back());
+                }
+                iter
+            },
+            |iter| black_box(black_box(iter).collect::<SmallVec<T, 8>>()),
+            BatchSize::LargeInput
+        );
+    });
+}
+
+fn retention(c: &mut Criterion) {
+    for (name, capacity, len, front, back) in [
+        ("front", 4096, 4096, 4032, 0),
+        ("back", 4096, 4096, 0, 4032),
+        ("slack", 4096, 64, 0, 0),
+        ("half", 128, 128, 64, 0),
+        ("odd_below_half", 129, 129, 65, 0),
+        ("odd_above_half", 129, 129, 64, 0)
+    ] {
+        retention_case(
+            c,
+            &format!("retention/{name}"),
+            capacity,
+            len,
+            front,
+            back,
+            |n| n
+        );
+    }
+    retention_case(c, "retention/drop_front", 256, 256, 240, 0, Dropped);
+}
+
 criterion_group! {
     name = benches;
     config = Criterion::default()
         .sample_size(100)
         .warm_up_time(Duration::from_millis(500))
         .measurement_time(Duration::from_secs(2));
-    targets = collect
+    targets = collect, retention
 }
 criterion_main!(benches);

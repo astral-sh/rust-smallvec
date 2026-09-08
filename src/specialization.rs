@@ -259,23 +259,27 @@ impl<T, const N: usize, const M: usize> SpecFromIterator<T, IntoIter<T, M>> for 
     fn spec_from_iter(iter: IntoIter<T, M>) -> Self {
         let len = iter.len();
         if iter.end.on_heap() && len > Self::inline_size() {
-            let iter = ManuallyDrop::new(iter);
-            // SAFETY: The iterator owns a heap allocation containing
-            // initialized elements in `begin..end`. Move them to
-            // the start, allowing overlap, and transfer ownership
-            // of the allocation to the new vector.
-            unsafe {
-                let (ptr, capacity) = iter.raw.heap;
-                if iter.begin != 0 {
-                    copy(ptr.as_ptr().add(iter.begin), ptr.as_ptr(), len);
+            // SAFETY: The iterator's heap flag is set.
+            let (ptr, capacity) = unsafe { iter.raw.heap };
+            // Bound spare capacity even if only the back was consumed or the
+            // source had excess capacity before iteration started.
+            if len >= capacity.div_ceil(2) {
+                let iter = ManuallyDrop::new(iter);
+                // SAFETY: The iterator owns a heap allocation containing
+                // initialized elements in `begin..end`. Move them to
+                // the start, allowing overlap, and transfer ownership
+                // of the allocation to the new vector.
+                unsafe {
+                    if iter.begin != 0 {
+                        copy(ptr.as_ptr().add(iter.begin), ptr.as_ptr(), len);
+                    }
+                    return Self::from_raw_parts(ptr.as_ptr(), len, capacity);
                 }
-                Self::from_raw_parts(ptr.as_ptr(), len, capacity)
             }
-        } else {
-            let mut result = Self::with_capacity(len);
-            result.spec_extend(iter);
-            result
         }
+        let mut result = Self::with_capacity(len);
+        result.spec_extend(iter);
+        result
     }
 }
 
