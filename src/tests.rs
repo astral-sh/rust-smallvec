@@ -816,6 +816,109 @@ fn test_resize() {
     assert_eq!(v[..], [1, 0][..]);
 }
 
+mod repeated_clone {
+    use super::*;
+    use std::{
+        cell::Cell,
+        panic::{catch_unwind, AssertUnwindSafe},
+    };
+
+    #[derive(Default)]
+    struct Counts {
+        clones: Cell<usize>,
+        drops: Cell<usize>,
+    }
+
+    struct Item(Rc<Counts>, usize);
+
+    impl Clone for Item {
+        fn clone(&self) -> Self {
+            let clones = self.0.clones.get();
+            assert!(clones < self.1, "clone panic");
+            self.0.clones.set(clones + 1);
+            Item(self.0.clone(), self.1)
+        }
+    }
+
+    impl Drop for Item {
+        fn drop(&mut self) {
+            self.0.drops.set(self.0.drops.get() + 1);
+        }
+    }
+
+    #[test]
+    fn resize_moves_original() {
+        for &old_len in &[0, 7, 8, 9] {
+            for &added in &[0usize, 1, 2, 9] {
+                let counts = Rc::new(Counts::default());
+                let mut v: SmallVec<[Item; 8]> =
+                    (0..old_len).map(|_| Item(counts.clone(), 100)).collect();
+                v.resize(old_len + added, Item(counts.clone(), 100));
+                assert_eq!(v.len(), old_len + added);
+                assert_eq!(counts.clones.get(), added.saturating_sub(1));
+                assert_eq!(counts.drops.get(), if added == 0 { 1 } else { 0 });
+                drop(v);
+                assert_eq!(counts.drops.get(), old_len + added.max(1));
+            }
+        }
+    }
+
+    #[test]
+    fn clone_panic_drops_initialized_elements() {
+        for &old_len in &[0, 7, 8, 9] {
+            let counts = Rc::new(Counts::default());
+            let mut v: SmallVec<[Item; 8]> =
+                (0..old_len).map(|_| Item(counts.clone(), 100)).collect();
+            let result = catch_unwind(AssertUnwindSafe(|| {
+                v.resize(old_len + 4, Item(counts.clone(), 2));
+            }));
+            assert!(result.is_err());
+            assert_eq!(v.len(), old_len + 2);
+            assert_eq!(counts.drops.get(), 1);
+            drop(v);
+            assert_eq!(counts.drops.get(), old_len + 3);
+        }
+    }
+
+    #[test]
+    fn zero_sized_clone_can_be_skipped() {
+        struct Item;
+        impl Clone for Item {
+            fn clone(&self) -> Self {
+                panic!("the original should be moved");
+            }
+        }
+        impl Drop for Item {
+            fn drop(&mut self) {}
+        }
+
+        let mut v = SmallVec::<[Item; 0]>::new();
+        v.resize(1, Item);
+        v.resize(2, Item);
+        assert_eq!(v.len(), 2);
+        assert!(!v.spilled());
+    }
+
+    #[test]
+    fn non_drop_types_still_call_clone() {
+        struct Item<'a>(&'a Cell<usize>);
+        impl Clone for Item<'_> {
+            fn clone(&self) -> Self {
+                self.0.set(self.0.get() + 1);
+                Item(self.0)
+            }
+        }
+
+        for &n in &[0, 1, 4, 8, 9] {
+            let clones = Cell::new(0);
+            let mut v = SmallVec::<[Item; 8]>::new();
+            v.resize(n, Item(&clones));
+            assert_eq!(v.len(), n);
+            assert_eq!(clones.get(), n);
+        }
+    }
+}
+
 #[cfg(feature = "write")]
 #[test]
 fn test_write() {
