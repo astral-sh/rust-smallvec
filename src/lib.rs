@@ -1484,6 +1484,7 @@ impl<A: Array> SmallVec<A> {
 
     /// Insert multiple elements at position `index`, shifting all following
     /// elements toward the back.
+    #[inline]
     pub fn insert_many<I: IntoIterator<Item = A::Item>>(&mut self, index: usize, iterable: I) {
         let mut iter = iterable.into_iter();
         if index == self.len() {
@@ -1500,6 +1501,10 @@ impl<A: Array> SmallVec<A> {
         let mut num_added = 0;
         let old_len = self.len();
         assert!(index <= old_len);
+
+        if lower_size_bound == 0 {
+            return insert_excess(self, index, iter);
+        }
 
         unsafe {
             // Reserve space for `lower_size_bound` elements.
@@ -1550,10 +1555,54 @@ impl<A: Array> SmallVec<A> {
             mem::forget(guard);
         }
 
-        // Insert any remaining elements one-by-one.
-        for element in iter {
-            self.insert(index + num_added, element);
-            num_added += 1;
+        insert_excess(self, index + num_added, iter);
+
+        #[inline]
+        fn insert_excess<A: Array, I: Iterator<Item = A::Item>>(
+            vec: &mut SmallVec<A>,
+            start: usize,
+            mut iter: I,
+        ) {
+            if let Some(element) = iter.next() {
+                let guard = RotateOnDrop {
+                    old_len: vec.len(),
+                    start,
+                    vec,
+                };
+                // Keep the first item guarded in case lookahead panics.
+                guard.vec.push(element);
+                if let Some(element) = iter.next() {
+                    extend_and_rotate(guard, element, iter);
+                } else {
+                    // The push reserved a slot, so reinserting cannot grow.
+                    let element = guard.vec.pop().unwrap();
+                    guard.vec.insert(start, element);
+                    // The element is already in position.
+                    mem::forget(guard);
+                }
+            }
+        }
+
+        #[cold]
+        fn extend_and_rotate<A: Array, I: Iterator<Item = A::Item>>(
+            guard: RotateOnDrop<'_, A>,
+            element: A::Item,
+            iter: I,
+        ) {
+            guard.vec.push(element);
+            guard.vec.extend(iter);
+        }
+
+        struct RotateOnDrop<'a, A: Array> {
+            vec: &'a mut SmallVec<A>,
+            start: usize,
+            old_len: usize,
+        }
+
+        impl<A: Array> Drop for RotateOnDrop<'_, A> {
+            fn drop(&mut self) {
+                self.vec[self.start..].rotate_left(self.old_len - self.start);
+            }
         }
 
         struct DropOnPanic<T> {
