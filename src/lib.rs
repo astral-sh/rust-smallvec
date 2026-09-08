@@ -114,7 +114,6 @@ use {
             Hash,
             Hasher
         },
-        iter::repeat_n,
         marker::PhantomData,
         mem::{
             ManuallyDrop,
@@ -2052,7 +2051,15 @@ impl<T, const N: usize> Drop for IntoIter<T, N> {
 #[track_caller]
 pub fn from_elem<T: Clone, const N: usize>(elem: T, n: usize) -> SmallVec<T, N> {
     if n > SmallVec::<T, N>::inline_size() {
-        repeat_n(elem, n).collect()
+        #[cfg(feature = "specialization")]
+        {
+            core::iter::repeat_n(elem, n).collect()
+        }
+
+        #[cfg(not(feature = "specialization"))]
+        {
+            SmallVec::from_vec(alloc::vec![elem; n])
+        }
     } else {
         #[cfg(feature = "specialization")]
         {
