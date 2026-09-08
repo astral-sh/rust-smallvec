@@ -2511,10 +2511,9 @@ unsafe impl<const N: usize> BufMut for SmallVec<u8, N> {
 
     #[inline]
     fn put_bytes(&mut self, val: u8, cnt: usize) {
-        self.reserve(cnt);
-        self.spare_capacity_mut()[..cnt].fill(MaybeUninit::new(val));
-        // SAFETY: We reserved space for `cnt` bytes and initialized them above.
-        unsafe { self.len.add(cnt) };
+        // If the addition overflows, then the `resize` will fail.
+        let new_len = self.len().saturating_add(cnt);
+        self.resize(new_len, val);
     }
 }
 

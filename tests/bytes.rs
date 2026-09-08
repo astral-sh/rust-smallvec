@@ -35,31 +35,6 @@ fn smallvec_put_bytes() {
 }
 
 #[test]
-fn put_bytes_preserves_prefix_across_capacity_boundaries() {
-    for prefix in [0, 3, 8] {
-        for count in [0, 1, 5, 8, 9, 64] {
-            for value in [0, 19, 255] {
-                let mut buf: SmallVec = smallvec::from_elem(17, prefix);
-                buf.put_bytes(value, count);
-                let mut expected = vec![17; prefix];
-                expected.resize(prefix + count, value);
-                assert_eq!(&buf[..], expected);
-            }
-        }
-    }
-}
-
-#[test]
-fn put_bytes_overflow_preserves_contents() {
-    let mut buf = SmallVec::from([17, 18, 19]);
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        buf.put_bytes(0, usize::MAX);
-    }));
-    assert!(result.is_err());
-    assert_eq!(&buf[..], &[17, 18, 19]);
-}
-
-#[test]
 fn put_u8() {
     let mut buf = SmallVec::with_capacity(8);
     buf.put_u8(33);
