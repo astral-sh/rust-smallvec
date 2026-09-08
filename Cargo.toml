@@ -72,6 +72,10 @@ name = "bench"
 path = "benches/bench.rs"
 harness = false
 
+[[bench]]
+name = "collect"
+harness = false
+
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
