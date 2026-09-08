@@ -646,6 +646,27 @@ impl<T, const N: usize> Iterator for IntoIter<T, N> {
     }
 
     #[inline]
+    fn nth(&mut self, n: usize) -> Option<T> {
+        let (end, on_heap) = self.end.parts();
+        let skipped = core::cmp::min(n, end - self.begin);
+        // SAFETY: the skipped range contains initialized items. Remove it
+        // before dropping so a panicking destructor cannot cause a double drop.
+        unsafe {
+            let ptr = self.raw.as_mut_ptr(on_heap).add(self.begin);
+            self.begin += skipped;
+            core::ptr::slice_from_raw_parts_mut(ptr, skipped).drop_in_place();
+        }
+        self.next()
+    }
+
+    #[inline]
+    fn last(mut self) -> Option<T> {
+        let last = self.next_back();
+        drop(self);
+        last
+    }
+
+    #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
         let size = self.end.len() - self.begin;
         (size, Some(size))
@@ -667,6 +688,20 @@ impl<T, const N: usize> DoubleEndedIterator for IntoIter<T, N> {
                 Some(value)
             }
         }
+    }
+
+    #[inline]
+    fn nth_back(&mut self, n: usize) -> Option<T> {
+        let (end, on_heap) = self.end.parts();
+        let skipped = core::cmp::min(n, end - self.begin);
+        // SAFETY: the skipped range contains initialized items, and has already
+        // been removed from the iterator in case a destructor panics.
+        unsafe {
+            self.end.sub(skipped);
+            let ptr = self.raw.as_mut_ptr(on_heap).add(end - skipped);
+            core::ptr::slice_from_raw_parts_mut(ptr, skipped).drop_in_place();
+        }
+        self.next_back()
     }
 }
 impl<T, const N: usize> ExactSizeIterator for IntoIter<T, N> {}
