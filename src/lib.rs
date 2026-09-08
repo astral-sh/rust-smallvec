@@ -2385,6 +2385,19 @@ impl<A: Array> Iterator for IntoIter<A> {
     }
 
     #[inline]
+    fn nth(&mut self, n: usize) -> Option<A::Item> {
+        let skipped = cmp::min(n, self.end - self.current);
+        unsafe {
+            let ptr = self.data.as_mut_ptr().add(self.current);
+            // Remove the skipped items before dropping them, so a panicking
+            // destructor cannot cause the iterator to drop them again.
+            self.current += skipped;
+            ptr::drop_in_place(slice::from_raw_parts_mut(ptr, skipped));
+        }
+        self.next()
+    }
+
+    #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
         let size = self.end - self.current;
         (size, Some(size))
